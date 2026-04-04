@@ -465,10 +465,8 @@ def test_macro_features():
 
         logger.info("\n3️⃣ Computing macro features...")
         # Use M5 data with close prices
-        import pandas as pd
-        df_gold_m5 = pd.read_csv('data/xauusd_m5.csv')
-        df_gold_m5['time'] = pd.to_datetime(df_gold_m5['time'])
-        df_gold_m5 = df_gold_m5.set_index('time').sort_index()
+        from features.timeframe_features import load_timeframe_data
+        df_gold_m5 = load_timeframe_data('data/xauusd_m5.csv')
 
         macro_features = compute_macro_features(df_gold_m5, macro_dict)
 

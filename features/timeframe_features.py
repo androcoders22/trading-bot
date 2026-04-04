@@ -180,26 +180,84 @@ def compute_bb_position(prices, period=20, num_std=2):
 
 def load_timeframe_data(filepath):
     """
-    Load a single timeframe data file
+    Load a single timeframe data file.
+    Handles both standard CSVs and MT5 exports (tab-separated with angle brackets).
 
     Args:
-        filepath: Path to CSV file with columns: time, open, high, low, close, volume
+        filepath: Path to CSV file
 
     Returns:
-        DataFrame with datetime index
+        DataFrame with datetime index and columns: open, high, low, close, volume
     """
-    df = pd.read_csv(filepath)
+    filepath = Path(filepath)
+    if not filepath.exists():
+        raise FileNotFoundError(f"File not found: {filepath}")
 
-    # Convert time to datetime
-    df['time'] = pd.to_datetime(df['time'])
+    # Use sep=None with engine='python' to auto-detect separator (tab or comma)
+    df = pd.read_csv(filepath, sep=None, engine='python')
+
+    # ---- Handle MT5 angle-bracket columns ----
+    rename_map = {
+        "<DATE>": "date",
+        "<TIME>": "clock",
+        "<OPEN>": "open",
+        "<HIGH>": "high",
+        "<LOW>": "low",
+        "<CLOSE>": "close",
+        "<TICKVOL>": "volume",  # Map tick volume to volume for MT5
+        "<VOL>": "vol_ignored",
+    }
+    df = df.rename(columns=rename_map)
+
+    # ---- Handle Timestamps ----
+    if 'time' in df.columns:
+        df['time'] = pd.to_datetime(df['time'])
+    elif 'date' in df.columns and 'clock' in df.columns:
+        # MT5 format: combine date and clock
+        df['time'] = pd.to_datetime(df['date'].astype(str) + ' ' + df['clock'].astype(str))
+    elif 'Date' in df.columns and 'Time' in df.columns:
+        # Alternative MT5 format
+        df['time'] = pd.to_datetime(df['Date'].astype(str) + ' ' + df['Time'].astype(str))
+    else:
+        # If still no time column, try lowercasing all columns
+        df.columns = [c.lower() for c in df.columns]
+        if 'time' in df.columns:
+            df['time'] = pd.to_datetime(df['time'])
+        else:
+            raise KeyError(f"Could not find time column in {filepath.name}. Columns: {df.columns.tolist()}")
+
+    # ---- Finalize DataFrame ----
     df = df.set_index('time')
     df = df.sort_index()
 
-    # Ensure we have required columns
+    # Ensure required columns are present and lowercase
+    df.columns = [c.lower() for c in df.columns]
+    
+    # If 'tick_volume' exists and 'volume' doesn't, rename it
+    if 'tick_volume' in df.columns and 'volume' not in df.columns:
+        df = df.rename(columns={'tick_volume': 'volume'})
+
+    # Ensure we have all required columns
     required = ['open', 'high', 'low', 'close', 'volume']
     for col in required:
         if col not in df.columns:
-            raise ValueError(f"Missing required column: {col}")
+            # Check if it's just capitalized
+            found = False
+            for actual_col in df.columns:
+                if actual_col.lower() == col:
+                    df = df.rename(columns={actual_col: col})
+                    found = True
+                    break
+            if not found:
+                # If volume is missing, try to use any column that looks like volume
+                if col == 'volume' and 'tickvol' in df.columns:
+                    df = df.rename(columns={'tickvol': 'volume'})
+                else:
+                    raise ValueError(f"Missing required column '{col}' in {filepath.name}. Found: {df.columns.tolist()}")
+
+    # Select only required columns and ensure numeric
+    df = df[required].apply(pd.to_numeric, errors='coerce')
+    df = df.dropna()
 
     return df
 
@@ -262,26 +320,58 @@ def load_and_compute_all_timeframes(base_timeframe='M5', data_dir='data'):
 
     # Load and compute features for each timeframe
     tf_features = {}
+    base_df = None
 
     for tf_name, filename in timeframe_files.items():
         filepath = data_dir / filename
+        df = None
 
-        if not filepath.exists():
-            if tf_name == 'W1':
-                logger.warning(f"⚠️  {tf_name} file not found, skipping (optional)")
-                continue
-            else:
-                raise FileNotFoundError(f"Required file not found: {filepath}")
+        if filepath.exists():
+            logger.info(f"\n📥 Loading {tf_name} from {filename}...")
+            df = load_timeframe_data(filepath)
+        else:
+            # If file missing, try to resample from M5
+            if tf_name != 'M5' and 'M5' in tf_features:
+                logger.warning(f"⚠️  {tf_name} file not found ({filename}), resampling from M5...")
+                m5_df = tf_features['M5_raw'] # We'll store raw df temporarily
+                
+                resample_map = {
+                    'M15': '15min',
+                    'H1': 'h',
+                    'H4': '4h',
+                    'D1': 'd',
+                    'W1': 'W'
+                }
+                
+                rule = resample_map.get(tf_name)
+                if rule:
+                    df = m5_df.resample(rule).agg({
+                        'open': 'first',
+                        'high': 'max',
+                        'low': 'min',
+                        'close': 'last',
+                        'volume': 'sum'
+                    }).dropna()
+                    logger.info(f"   ✅ Resampled {tf_name} from M5: {len(df):,} bars")
+            
+            if df is None:
+                if tf_name == 'W1':
+                    logger.warning(f"⚠️  {tf_name} file not found and could not resample, skipping (optional)")
+                    continue
+                else:
+                    raise FileNotFoundError(f"Required file not found and could not resample: {filepath}")
 
-        # Load data
-        logger.info(f"\n📥 Loading {tf_name} from {filename}...")
-        df = load_timeframe_data(filepath)
-        logger.info(f"   ✅ Loaded {len(df):,} bars")
+        # Store raw df for resampling others if needed
+        if tf_name == 'M5':
+            tf_features['M5_raw'] = df
 
         # Compute features
         features = compute_timeframe_features(df, tf_name)
         tf_features[tf_name] = features
 
+    # Clean up raw data
+    if 'M5_raw' in tf_features:
+        del tf_features['M5_raw']
     # Align all timeframes to base
     logger.info(f"\n🔄 Aligning all timeframes to {base_timeframe}...")
     aligned_features = align_timeframes(tf_features, base_timeframe)

@@ -82,10 +82,8 @@ def make_ultimate_features(base_timeframe='M5', data_dir='data'):
         'H1': 'xauusd_h1_from_m1.csv',
     }.get(base_timeframe, 'xauusd_m5.csv')
 
-    df_gold = pd.read_csv(f"{data_dir}/{base_data_file}")
-    df_gold['time'] = pd.to_datetime(df_gold['time'])
-    df_gold = df_gold.set_index('time').sort_index()
-
+    from features.timeframe_features import load_timeframe_data
+    df_gold = load_timeframe_data(f"{data_dir}/{base_data_file}")
     macro_data = load_macro_data(data_dir=data_dir)
     macro_features = compute_macro_features(df_gold, macro_data)
 

@@ -47,3 +47,6 @@ Thumbs.db
 .env
 *.key
 credentials.json
+
+.venv/
+venv/

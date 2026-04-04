@@ -50,3 +50,6 @@ credentials.json
 
 .venv/
 venv/
+
+!data/xauusd_m5.csv
+!data/xauusd_m15.csv

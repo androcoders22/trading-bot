@@ -36,8 +36,8 @@ COST = 0.0001
 TRAIN_END_DATE = "2022-01-01"
 
 # DreamerV3 hyperparameters
-BATCH_SIZE = 16
-PREFILL_STEPS = 5_000  # Random exploration to fill buffer
+BATCH_SIZE = 512   #  previous was 16
+PREFILL_STEPS = 10_000  # previous was 5_000  # Random exploration to fill buffer
 TRAIN_STEPS = 1_000_000  # Training steps
 TRAIN_EVERY = 4  # Train every N environment steps
 SAVE_EVERY = 10_000
@@ -221,8 +221,8 @@ def main():
     agent = DreamerV3Agent(
         obs_dim=env.observation_space,
         action_dim=env.action_space,
-        embed_dim=256,
-        hidden_dim=512,
+        embed_dim=512,  # previous was 256
+        hidden_dim=1024, # previous was 512
         stoch_dim=32,
         num_categories=32,
         device=device
